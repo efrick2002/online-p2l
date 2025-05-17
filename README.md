@@ -1,18 +1,31 @@
-# P2L
+# Online-P2L
 
-This is the codebase for the paper [Prompt-to-Leaderboard](https://arxiv.org/pdf/2502.14855).
+This is the codebase for the project Online-P2L [^longnote].
+
+[^longnote]: Adapted from the codebase for [Prompt-to-Leaderboard](https://arxiv.org/pdf/2502.14855).
+
+The training configs for OP2L experiments are located in [training_configs](./training_configs)
+
+Code to simulate and pre-generate Geometric Buffer code is at [p2l/online_training/geometric_buffer.py](p2l/online_training/geometric_buffer.py)
+
+Code to simulate and pre-generate Replay Buffer code is at [p2l/online_training/replay_buffer.py](p2l/online_training/replay_buffer.py)
 
 ## Abstract
-Language model evaluations typically rely on aggregated metrics like accuracy or human preference, averaging across users and prompts. This averaging obscures user- and prompt-specific variations in model performance.
-To address this, we propose Prompt-to-Leaderboard (P2L), a method that predicts prompt-specific leaderboards by training large language models on human preference data.
-The core idea is to train LLMs to output the coefficients of parametric regressions that represent per-prompt leaderboards.
-The resulting prompt-dependent leaderboards facilitate optimal routing of queries to models, personalized leaderboards, unsupervised task-specific performance analysis, and automated evaluation of model strengths and weaknesses. 
-Live results from Chatbot Arena suggest that P2L better captures the nuanced landscape of language model performance than the averaged leaderboard.
-Furthermore, our findings suggest that P2L's ability to produce prompt-specific evaluations follows a power law scaling similar to that observed in LLMs themselves. In January 2025, the router we trained based on this methodology achieved the \#1 spot in the Chatbot Arena leaderboard.
+The evaluation of large language models (LLMs) traditionally relies on static leaderboards, which cannot capture prompt-specific performance variations. Prompt-to-Leaderboard (P2L) addresses this limitation by creating prompt-specific rankings through a technique called "prompt-to-regression"~\cite{frick2025prompt}. P2L itself unlocks granular per-prompt evaluations, cost-optimal routing between LLMs, and automatic strength/weakness detection. However, P2L has a key limitation that prevents real-world deployability: P2L remains constrained by its fixed architecture, which cannot accommodate newly released models without complete retraining. Furthermore, P2L is trained on over 2 million rows of human preference data, with the dataset size constantly increasing with time. Therefore, re-training P2L to update the model is prohibitively expensive, and increasingly so. Unfortunately, naively training P2L with chronologically ordered data causes catastrophic forgetting due to temporal distribution shift, making this strategy ineffective. Therefore, we introduce Online P2L (OP2L), which enables continuous learning of human preferences through two strategic buffering approaches, Replay Buffer and our novel Geometric Buffer, that selectively manage training examples based on model familiarity, thus preventing catastrophic forgetting while preserving evaluation accuracy as new models enter the ecosystem. Importantly, both these algorithms only modify the training data as it is streamed in, and require no complex architecture or learning algorithm changes. We perform hyperparameter ablations on both the Replay Buffer and Geometric Buffer to explore the resulting model quality. We find both strategies perform significantly better than the chronological baseline, nearly matching oracle performance. With the replay buffer, we decrease the loss delta by 65.1\% between the OP2L model and the oracle fully re-trained P2L model compared to naive chronological training. Even better, with our novel Geometric Buffer, we decrease the loss delta by 78.1\%.
+
+With Online P2L, we can realize much of the potential of the P2L framework. With our OP2L, we can continuously update the OP2L with new incoming data and new LLMs. In theory, this means we can:
+
+1. Continuously provide granular prompt-level model leaderboards even with newly deployed models.
+1. Hold the highest performance via a continuously updated router.
+1. Continuous, granular, regression tracking of new model deployments
+\end{enumerate}
+
+Therefore, OP2L and the techniques presented in this paper are the first step towards continuous, up-to-date, fine-grained LLM evaluations that allow safe and auditable model deployments. Moreover, our approach devises a generalizable framework that can be applied beyond P2L, such as in recommendation systems, alignment pipelines, or reward model training.
+
 
 ## Table of Contents
 
-- [P2L](#p2l)
+- [Online-P2L](#Online-P2L)
   - [Abstract](#abstract)
   - [Table of Contents](#table-of-contents)
   - [Environment Setup](#environment-setup)
@@ -26,9 +39,12 @@ Furthermore, our findings suggest that P2L's ability to produce prompt-specific 
     - [Example: serving a Grounded RK based simple cost router](#example-serving-a-grounded-rk-based-simple-cost-router)
   - [Calling the OpenAI Compatible Router](#calling-the-openai-compatible-router)
   - [Training a P2L Model](#training-a-p2l-model)
+  - [Training an Online P2L Model](#online-training)
   - [Inferencing a P2L Model](#inferencing-a-p2l-model)
   - [AutoEval Suite](#autoeval-suite)
     - [Params](#params)
+  - [Online Evals](#auto-eval-for-online-training)
+
 
 
 ## Environment Setup
@@ -310,7 +326,7 @@ This codebase also contains the training code for P2L models. To train a P2L mod
 To train run, for example:
 
 ```bash
-deepspeed --num_gpus=8 train.py --config training_configs/<your_config>.yaml --no-eval --save-steps 512
+deepspeed --num_gpus=8 p2l.train --config training_configs/<your_config>.yaml --no-eval --save-steps 512
 ```
 
 ## Inferencing a P2L Model
@@ -322,6 +338,17 @@ python -m p2l.eval --model <p2l_model_name> --dataset <hf_dataset_path> --head-t
 ```
 
 This will work on any dataset of single turn prompts under the column name `prompt`.
+
+## Online-Training
+
+Our online training code is found in [p2l/online_training](./p2l/online_training).
+
+Online training is a drop-in replacement for normal training:
+
+```bash
+deepspeed --num_gpus=8 p2l.online_training.online_train --config training_configs/<your_config>.yaml --checkpoint <prev_model_weights> --no-eval --save-steps 512
+```
+
 
 ## AutoEval Suite
 
@@ -371,9 +398,23 @@ Our in-depth evaluation code can be run using `p2l.auto_evals`.
 
 ---
 
+## Auto-Eval for Online Training
+
+It is as simple as:
+
+```bash
+python -m p2l.eval_chrono -m <hf_model_path> -v validation_sets -ht <head_type> -lt <loss_type> -od output_dir_name
+```
+
 ## Citation
 
 ```
+@misc{frick2025onlinep2l,
+      title={Online Prompt-to-Leaderboard}, 
+      author={Connor Chen and Joseph Tennyson and Evan Frick},
+      year={2025},
+}
+
 @misc{frick2025prompttoleaderboard,
       title={Prompt-to-Leaderboard}, 
       author={Evan Frick and Connor Chen and Joseph Tennyson and Tianle Li and Wei-Lin Chiang and Anastasios N. Angelopoulos and Ion Stoica},
